@@ -26,20 +26,23 @@ fn cli_interpreter() {
     let mut line_buffer = String::new();
     let mut interpreter = Interpreter::new();
     while std::io::stdin().read_line(&mut line_buffer).is_ok() {
-        print!("{}[2J", 27 as char);
         let tokens = Lexer::new(line_buffer.trim()).collect::<Vec<_>>();
         let tokens = tokens
             .into_iter()
             .map(|token| token.unwrap())
             .collect::<Vec<_>>();
 
-        let stack = interpreter.proccess_token(tokens);
-        for elem in stack {
+        let status = interpreter.proccess_token(tokens);
+        for elem in interpreter.stack.iter() {
             print!("{} ", elem);
         }
         println!("<- Top");
+        match status {
+            Ok(status) => println!("\t {}", status),
+            Err(status) => println!("\t {}", status),
+        }
         std::io::stdout().flush().unwrap();
-
         line_buffer.clear();
     }
+    println!("out");
 }

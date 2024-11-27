@@ -1,18 +1,25 @@
-use std::{char, collections::VecDeque, fmt::Display};
+use std::{
+    char,
+    collections::{HashMap, VecDeque},
+    fmt::Display,
+};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Token {
     Number(Number),
     ArithmeticOperators(ArithmeticOperators),
+    Word(String),
+    Colon,
+    Semicolon,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ArithmeticOperators {
     Plus,
     Minus,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Number {
     SignedInteger(i64),
     UsignedInteger(u64),
@@ -24,6 +31,9 @@ impl Display for Token {
         match self {
             Token::ArithmeticOperators(operator) => write!(f, "{}", operator),
             Token::Number(num) => write!(f, "{}", num),
+            Token::Colon => write!(f, ":",),
+            Token::Word(word) => write!(f, "{}", word),
+            Token::Semicolon => todo!(),
         }
     }
 }
@@ -75,19 +85,33 @@ impl<'a> Lexer<'a> {
 
         Ok(Number::UsignedInteger(number.parse().unwrap()))
     }
+
+    fn parse_word(&mut self, letter: char) -> Result<String, ()> {
+        let mut word_iter = self.rest.chars();
+
+        let word = std::iter::once(letter)
+            .chain(word_iter.by_ref().take_while(|w| !w.is_whitespace()))
+            .collect::<String>();
+
+        self.rest = word_iter.as_str();
+
+        Ok(word)
+    }
 }
 
 impl<'a> Iterator for Lexer<'a> {
     type Item = Result<Token, ()>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut input_iter = self.rest.chars();
-        let letter = input_iter.next()?;
+        let mut input_iter = self.rest.char_indices();
+        let (pik, letter) = input_iter.next()?;
 
         self.rest = input_iter.as_str();
 
         match letter {
             '+' => Some(Ok(Token::ArithmeticOperators(ArithmeticOperators::Plus))),
+            ':' => Some(Ok(Token::Colon)),
+            ';' => Some(Ok(Token::Semicolon)),
             '-' => Some(Ok(Token::ArithmeticOperators(ArithmeticOperators::Minus))),
             '0'..='9' => {
                 let num = self.parse_num(letter);
@@ -100,7 +124,10 @@ impl<'a> Iterator for Lexer<'a> {
                 println!("Skip");
                 self.next()
             }
-            _ => Some(Err(())),
+            _ => {
+                let word = self.parse_word(letter).unwrap();
+                Some(Ok(Token::Word(word)))
+            }
         }
     }
 }
@@ -109,46 +136,128 @@ pub enum InterpreterStatus {
     Ok,
     Error(InterpreterError),
 }
+impl Display for InterpreterStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self {
+            InterpreterStatus::Ok => write!(f, "ok"),
+            InterpreterStatus::Error(error) => write!(f, "{}", error),
+        }
+    }
+}
 pub enum InterpreterError {
     Overflow,
     Underflow,
 }
+impl Display for InterpreterError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self {
+            InterpreterError::Overflow => write!(f, "Stack Overflow"),
+            InterpreterError::Underflow => write!(f, "Stack Underflow"),
+        }
+    }
+}
 
 pub struct Interpreter {
-    stack: VecDeque<Token>,
+    pub stack: VecDeque<Token>,
+    words_dict: HashMap<String, Vec<Token>>,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
         Self {
             stack: VecDeque::new(),
+            words_dict: HashMap::new(),
         }
     }
-    fn arithmetic_operations(
-        op: ArithmeticOperators,
-        left: Token,
-        right: Token,
-    ) -> Result<Token, InterpreterError> {
-        todo!()
-    }
-    pub fn proccess_token(&mut self, tokens: Vec<Token>) -> (&VecDeque<Token>, InterpreterStatus) {
-        let mut status = InterpreterStatus::Ok;
-        for token in tokens {
+    pub fn proccess_token(
+        &mut self,
+        tokens: Vec<Token>,
+    ) -> Result<InterpreterStatus, InterpreterStatus> {
+        let status = InterpreterStatus::Ok;
+        let mut token_iter = tokens.into_iter();
+        while let Some(token) = token_iter.next() {
             match token {
-                Token::Number(_) => self.stack.push_back(token),
-                Token::ArithmeticOperators(op) => {
-                    if self.stack.len() == 2 {
-                        let left = self.stack.pop_back().unwrap();
-                        let right = self.stack.pop_back().unwrap();
-                        let result = Self::arithmetic_operations(op, left, right);
-                        match result {
-                            Ok(result) => self.stack.push_back(result),
-                            Err(error) => status = InterpreterStatus::Error(error),
-                        }
+                Token::Number(_) => self.stack.push_back(token.clone()),
+                Token::Colon => {
+                    if let Some(Token::Word(word)) = token_iter.next() {
+                        let procedure = token_iter
+                            .by_ref()
+                            .take_while(|t| *t != Token::Semicolon)
+                            .collect::<Vec<_>>();
+
+                        self.words_dict.insert(word, procedure);
                     }
                 }
+                Token::ArithmeticOperators(op) => match op {
+                    ArithmeticOperators::Plus => {
+                        let left = self
+                            .stack
+                            .pop_back()
+                            .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+
+                        let right = self
+                            .stack
+                            .pop_back()
+                            .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+
+                        match (left, right) {
+                            (Token::Number(l), Token::Number(r)) => {
+                                let res = match (l, r) {
+                                    (Number::SignedInteger(l), Number::SignedInteger(r)) => {
+                                        let result = l + r;
+                                        Token::Number(Number::SignedInteger(result))
+                                    }
+                                    (Number::SignedInteger(_), Number::UsignedInteger(_)) => {
+                                        todo!()
+                                    }
+                                    (Number::SignedInteger(_), Number::Float(_)) => todo!(),
+                                    (Number::UsignedInteger(_), Number::SignedInteger(_)) => {
+                                        todo!()
+                                    }
+                                    (Number::UsignedInteger(l), Number::UsignedInteger(r)) => {
+                                        let result = l + r;
+                                        Token::Number(Number::UsignedInteger(result))
+                                    }
+                                    (Number::UsignedInteger(_), Number::Float(_)) => todo!(),
+                                    (Number::Float(_), Number::SignedInteger(_)) => todo!(),
+                                    (Number::Float(_), Number::UsignedInteger(_)) => todo!(),
+                                    (Number::Float(l), Number::Float(r)) => {
+                                        let result = l + r;
+                                        Token::Number(Number::Float(result))
+                                    }
+                                };
+
+                                self.stack.push_back(res);
+                            }
+                            _ => todo!(),
+                        }
+                    }
+                    ArithmeticOperators::Minus => todo!(),
+                },
+                Token::Word(word) => match word.as_str() {
+                    "dup" => {
+                        let dup = self
+                            .stack
+                            .pop_back()
+                            .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+                        self.stack.push_back(dup.clone());
+                        self.stack.push_back(dup);
+                    }
+                    "drop" => {
+                        let _ = self
+                            .stack
+                            .pop_back()
+                            .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+                    }
+                    _ => {
+                        println!("{}", word);
+                        let procedure = self.words_dict.get(&word).unwrap().clone();
+                        let result = self.proccess_token(procedure);
+                    }
+                },
+                Token::Semicolon => todo!(),
             }
         }
-        (&self.stack, status)
+        Ok(status)
     }
 }
