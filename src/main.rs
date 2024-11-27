@@ -26,19 +26,21 @@ fn cli_interpreter() {
     let mut line_buffer = String::new();
     let mut interpreter = Interpreter::new();
     while std::io::stdin().read_line(&mut line_buffer).is_ok() {
+        let mut output = String::new();
+
         let tokens = Lexer::new(line_buffer.trim()).collect::<Vec<_>>();
         let tokens = tokens
             .into_iter()
             .map(|token| token.unwrap())
             .collect::<Vec<_>>();
 
-        let status = interpreter.proccess_token(tokens);
+        let status = interpreter.proccess_token(tokens, &mut output);
         for elem in interpreter.stack.iter() {
             print!("{} ", elem);
         }
         println!("<- Top");
         match status {
-            Ok(status) => println!("\t {}", status),
+            Ok(status) => println!("\t {} {}", output, status),
             Err(status) => println!("\t {}", status),
         }
         std::io::stdout().flush().unwrap();
