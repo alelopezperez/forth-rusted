@@ -34,7 +34,7 @@ fn cli_interpreter() {
             .map(|token| token.unwrap())
             .collect::<Vec<_>>();
 
-        let status = interpreter.proccess_token(tokens, &mut output);
+        let status = interpreter.proccess_token(tokens, &mut output, false);
         for elem in interpreter.stack.iter() {
             print!("{} ", elem);
         }

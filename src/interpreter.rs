@@ -14,6 +14,14 @@ pub enum Token {
     Semicolon,
     Dot,
     Equal,
+    GreaterThan,
+    If(Vec<Token>, Option<Vec<Token>>),
+    LessThan,
+    Then,
+    Else,
+    Constant(String),
+    Do(Vec<Token>),
+    Key,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -39,6 +47,14 @@ impl Display for Token {
             Token::Dot => todo!(),
             Token::ApostroColon(_) => todo!(),
             Token::Equal => todo!(),
+            Token::GreaterThan => todo!(),
+            Token::LessThan => todo!(),
+            Token::If(_, _) => todo!(),
+            Token::Then => todo!(),
+            Token::Else => todo!(),
+            Token::Constant(_) => todo!(),
+            Token::Do(_) => todo!(),
+            Token::Key => todo!(),
         }
     }
 }
@@ -117,6 +133,7 @@ impl<'a> Iterator for Lexer<'a> {
             ':' => Some(Ok(Token::Colon)),
             ';' => Some(Ok(Token::Semicolon)),
             '=' => Some(Ok(Token::Equal)),
+            '>' => Some(Ok(Token::GreaterThan)),
             '.' => {
                 if pik + 1 < self.rest.len() {
                     let peek = &self.rest[pik..pik + 1];
@@ -151,7 +168,57 @@ impl<'a> Iterator for Lexer<'a> {
             }
             _ => {
                 let word = self.parse_word(letter).unwrap();
-                Some(Ok(Token::Word(word)))
+                if word == "if" {
+                    let mut if_true = Vec::new();
+                    let mut if_false = Vec::new();
+                    while let Some(Ok(tok)) = self.next() {
+                        if let Token::Else = tok {
+                            while let Some(Ok(tk)) = self.next() {
+                                if let Token::Semicolon = tk {
+                                    break;
+                                } else {
+                                    if_false.push(tk);
+                                }
+                            }
+                        } else if let Token::Semicolon = tok {
+                            break;
+                        } else {
+                            if_true.push(tok);
+                        }
+                    }
+                    println!("true {:?}", if_true);
+                    println!("false {:?}", if_false);
+                    Some(Ok(Token::If(if_true, Some(if_false))))
+                } else if word == "then" {
+                    Some(Ok(Token::Then))
+                } else if word == "else" {
+                    Some(Ok(Token::Else))
+                } else if word == "constant" {
+                    if let Some(Ok(Token::Word(word))) = self.next() {
+                        Some(Ok(Token::Constant(word)))
+                    } else {
+                        Some(Err(()))
+                    }
+                } else if word == "do" {
+                    let mut do_loop = Vec::new();
+                    while let Some(Ok(tok)) = self.next() {
+                        if let Token::Semicolon = tok {
+                            break;
+                        } else if let Token::Word(l) = tok {
+                            if l == "loop" {
+                                continue;
+                            }
+                            do_loop.push(Token::Word(l));
+                        } else {
+                            do_loop.push(tok);
+                        }
+                    }
+                    Some(Ok(Token::Do(do_loop)))
+                } else if word == "key" {
+                    Some(Ok(Token::Key))
+                } else {
+                    Some(Ok(Token::Word(word)))
+                }
             }
         }
     }
@@ -185,6 +252,7 @@ impl Display for InterpreterError {
 pub struct Interpreter {
     pub stack: VecDeque<Token>,
     words_dict: HashMap<String, Vec<Token>>,
+    const_dict: HashMap<String, Token>,
 }
 
 impl Interpreter {
@@ -192,17 +260,70 @@ impl Interpreter {
         Self {
             stack: VecDeque::new(),
             words_dict: HashMap::new(),
+            const_dict: HashMap::new(),
         }
     }
     pub fn proccess_token(
         &mut self,
         tokens: Vec<Token>,
         output: &mut String,
+        inside: bool,
     ) -> Result<InterpreterStatus, InterpreterStatus> {
         let mut status = InterpreterStatus::Ok;
         let mut token_iter = tokens.into_iter();
         while let Some(token) = token_iter.next() {
             match token {
+                Token::Key => {}
+                Token::Else => {}
+                Token::Then => {}
+                Token::Do(do_loop) => {
+                    if inside {
+                        let start = self
+                            .stack
+                            .pop_back()
+                            .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+
+                        let end = self
+                            .stack
+                            .pop_back()
+                            .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+
+                        if let (
+                            Token::Number(Number::SignedInteger(start)),
+                            Token::Number(Number::SignedInteger(end)),
+                        ) = (start, end)
+                        {
+                            (start..end).for_each(|i| {
+                                do_loop.iter().for_each(|instruction| {
+                                    if let Token::Word(s) = instruction {
+                                        if s == "i" {
+                                            let _ = self.proccess_token(
+                                                vec![Token::Number(Number::SignedInteger(i))],
+                                                output,
+                                                true,
+                                            );
+                                        }
+                                    } else {
+                                        let _ = self.proccess_token(
+                                            vec![instruction.clone()],
+                                            output,
+                                            inside,
+                                        );
+                                    }
+                                });
+                            });
+                        }
+                    }
+                }
+                Token::Constant(constant) => {
+                    self.words_dict.remove(&constant);
+                    let value = self
+                        .stack
+                        .pop_back()
+                        .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+
+                    self.const_dict.insert(constant, value);
+                }
                 Token::Number(_) => self.stack.push_back(token.clone()),
                 Token::Colon => {
                     if let Some(Token::Word(word)) = token_iter.next() {
@@ -211,6 +332,7 @@ impl Interpreter {
                             .take_while(|t| *t != Token::Semicolon)
                             .collect::<Vec<_>>();
 
+                        self.const_dict.remove(&word);
                         self.words_dict.insert(word, procedure);
                     }
                 }
@@ -249,6 +371,135 @@ impl Interpreter {
                     }
                     ArithmeticOperators::Minus => todo!(),
                 },
+                Token::Semicolon => todo!(),
+                Token::Dot => {
+                    let out = self
+                        .stack
+                        .pop_back()
+                        .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+                    output.push_str(format!("{out} ").as_str());
+                }
+                Token::ApostroColon(out) => {
+                    output.push_str(out.as_str());
+                }
+                Token::Equal => {
+                    let eq1 = self
+                        .stack
+                        .pop_back()
+                        .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+                    let eq2 = self
+                        .stack
+                        .pop_back()
+                        .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+
+                    if let (Token::Number(l), Token::Number(r)) = (eq1, eq2) {
+                        match (l, r) {
+                            (Number::SignedInteger(l), Number::SignedInteger(r)) => {
+                                let res = if l == r { -1 } else { 0 };
+                                self.stack
+                                    .push_back(Token::Number(Number::SignedInteger(res)))
+                            }
+                            (Number::SignedInteger(l), Number::Float(r)) => {
+                                let res = if l as f64 == r { -1 } else { 0 };
+                                self.stack
+                                    .push_back(Token::Number(Number::SignedInteger(res)));
+                            }
+                            (Number::Float(l), Number::SignedInteger(r)) => {
+                                let res = if l == r as f64 { -1 } else { 0 };
+                                self.stack
+                                    .push_back(Token::Number(Number::SignedInteger(res)));
+                            }
+                            (Number::Float(l), Number::Float(r)) => {
+                                let res = if l == r { -1 } else { 0 };
+                                self.stack
+                                    .push_back(Token::Number(Number::SignedInteger(res)));
+                            }
+                        }
+                    }
+                }
+                Token::GreaterThan => {
+                    let eq1 = self
+                        .stack
+                        .pop_back()
+                        .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+                    let eq2 = self
+                        .stack
+                        .pop_back()
+                        .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+
+                    if let (Token::Number(l), Token::Number(r)) = (eq1, eq2) {
+                        match (l, r) {
+                            (Number::SignedInteger(l), Number::SignedInteger(r)) => {
+                                let res = if l > r { -1 } else { 0 };
+                                self.stack
+                                    .push_back(Token::Number(Number::SignedInteger(res)))
+                            }
+                            (Number::SignedInteger(l), Number::Float(r)) => {
+                                let res = if l as f64 > r { -1 } else { 0 };
+                                self.stack
+                                    .push_back(Token::Number(Number::SignedInteger(res)));
+                            }
+                            (Number::Float(l), Number::SignedInteger(r)) => {
+                                let res = if l > r as f64 { -1 } else { 0 };
+                                self.stack
+                                    .push_back(Token::Number(Number::SignedInteger(res)));
+                            }
+                            (Number::Float(l), Number::Float(r)) => {
+                                let res = if l > r { -1 } else { 0 };
+                                self.stack
+                                    .push_back(Token::Number(Number::SignedInteger(res)));
+                            }
+                        }
+                    }
+                }
+                Token::LessThan => {
+                    let eq1 = self
+                        .stack
+                        .pop_back()
+                        .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+                    let eq2 = self
+                        .stack
+                        .pop_back()
+                        .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+
+                    if let (Token::Number(l), Token::Number(r)) = (eq1, eq2) {
+                        match (l, r) {
+                            (Number::SignedInteger(l), Number::SignedInteger(r)) => {
+                                let res = if l < r { -1 } else { 0 };
+                                self.stack
+                                    .push_back(Token::Number(Number::SignedInteger(res)))
+                            }
+                            (Number::SignedInteger(l), Number::Float(r)) => {
+                                let res = if (l as f64) < r { -1 } else { 0 };
+                                self.stack
+                                    .push_back(Token::Number(Number::SignedInteger(res)));
+                            }
+                            (Number::Float(l), Number::SignedInteger(r)) => {
+                                let res = if l < r as f64 { -1 } else { 0 };
+                                self.stack
+                                    .push_back(Token::Number(Number::SignedInteger(res)));
+                            }
+                            (Number::Float(l), Number::Float(r)) => {
+                                let res = if l < r { -1 } else { 0 };
+                                self.stack
+                                    .push_back(Token::Number(Number::SignedInteger(res)));
+                            }
+                        }
+                    }
+                }
+                Token::If(case_true, case_false) => {
+                    if inside {
+                        let check = self
+                            .stack
+                            .pop_back()
+                            .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+                        if let Token::Number(Number::SignedInteger(-1)) = check {
+                            let _ = self.proccess_token(case_true, output, inside);
+                        } else if let Some(case_false) = case_false {
+                            let _ = self.proccess_token(case_false, output, inside);
+                        }
+                    }
+                }
                 Token::Word(word) => match word.as_str() {
                     "dup" => {
                         let dup = self
@@ -329,57 +580,15 @@ impl Interpreter {
                         }
                     }
                     _ => {
-                        println!("{}", word);
-                        let procedure = self.words_dict.get(&word).unwrap().clone();
-                        let result = self.proccess_token(procedure, output);
-                    }
-                },
-                Token::Semicolon => todo!(),
-                Token::Dot => {
-                    let out = self
-                        .stack
-                        .pop_back()
-                        .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
-                    output.push_str(format!("{out} ").as_str());
-                }
-                Token::ApostroColon(out) => {
-                    output.push_str(out.as_str());
-                }
-                Token::Equal => {
-                    let eq1 = self
-                        .stack
-                        .pop_back()
-                        .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
-                    let eq2 = self
-                        .stack
-                        .pop_back()
-                        .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
-
-                    if let (Token::Number(l), Token::Number(r)) = (eq1, eq2) {
-                        match (l, r) {
-                            (Number::SignedInteger(l), Number::SignedInteger(r)) => {
-                                let res = if l == r { -1 } else { 0 };
-                                self.stack
-                                    .push_back(Token::Number(Number::SignedInteger(res)))
-                            }
-                            (Number::SignedInteger(l), Number::Float(r)) => {
-                                let res = if l as f64 == r { -1 } else { 0 };
-                                self.stack
-                                    .push_back(Token::Number(Number::SignedInteger(res)));
-                            }
-                            (Number::Float(l), Number::SignedInteger(r)) => {
-                                let res = if l == r as f64 { -1 } else { 0 };
-                                self.stack
-                                    .push_back(Token::Number(Number::SignedInteger(res)));
-                            }
-                            (Number::Float(l), Number::Float(r)) => {
-                                let res = if l == r { -1 } else { 0 };
-                                self.stack
-                                    .push_back(Token::Number(Number::SignedInteger(res)));
-                            }
+                        println!("the word {}", word);
+                        if let Some(constant) = self.const_dict.get(&word) {
+                            self.stack.push_back(constant.clone());
+                        } else {
+                            let procedure = self.words_dict.get(&word).unwrap().clone();
+                            let result = self.proccess_token(procedure, output, true);
                         }
                     }
-                }
+                },
             }
         }
         Ok(status)
