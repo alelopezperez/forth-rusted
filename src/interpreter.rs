@@ -342,6 +342,7 @@ impl Interpreter {
                 Token::Else => {}
                 Token::Then => {}
                 Token::Do(do_loop) => {
+                    println!("DOOO LOOOP {:?}", do_loop);
                     if inside {
                         let start = self
                             .stack
@@ -661,6 +662,7 @@ impl Interpreter {
                     "cr" => {
                         output.push('\n');
                     }
+                    "loop" => {}
                     "mod" => {
                         println!("el stack {:?}", self.stack);
                         let s1 = self
