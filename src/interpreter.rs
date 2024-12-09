@@ -2,6 +2,7 @@ use std::{
     char,
     collections::{HashMap, VecDeque},
     fmt::Display,
+    usize,
 };
 
 #[derive(Debug, PartialEq, Clone)]
@@ -22,6 +23,9 @@ pub enum Token {
     Constant(String),
     Do(Vec<Token>),
     Key,
+    Variable(String),
+    Exclamation,
+    At,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -55,6 +59,9 @@ impl Display for Token {
             Token::Constant(_) => todo!(),
             Token::Do(_) => todo!(),
             Token::Key => todo!(),
+            Token::Variable(_) => todo!(),
+            Token::Exclamation => todo!(),
+            Token::At => todo!(),
         }
     }
 }
@@ -134,6 +141,8 @@ impl<'a> Iterator for Lexer<'a> {
             ';' => Some(Ok(Token::Semicolon)),
             '=' => Some(Ok(Token::Equal)),
             '>' => Some(Ok(Token::GreaterThan)),
+            '!' => Some(Ok(Token::Exclamation)),
+            '@' => Some(Ok(Token::At)),
             '.' => {
                 if pik + 1 < self.rest.len() {
                     let peek = &self.rest[pik..pik + 1];
@@ -216,6 +225,12 @@ impl<'a> Iterator for Lexer<'a> {
                     Some(Ok(Token::Do(do_loop)))
                 } else if word == "key" {
                     Some(Ok(Token::Key))
+                } else if word == "variable" {
+                    if let Some(Ok(Token::Word(variable))) = self.next() {
+                        Some(Ok(Token::Variable(variable)))
+                    } else {
+                        Some(Err(()))
+                    }
                 } else {
                     Some(Ok(Token::Word(word)))
                 }
@@ -239,12 +254,14 @@ impl Display for InterpreterStatus {
 pub enum InterpreterError {
     Overflow,
     Underflow,
+    InvalidAddress,
 }
 impl Display for InterpreterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self {
             InterpreterError::Overflow => write!(f, "Stack Overflow"),
             InterpreterError::Underflow => write!(f, "Stack Underflow"),
+            InterpreterError::InvalidAddress => write!(f, "Invalid Memory Address"),
         }
     }
 }
@@ -253,6 +270,7 @@ pub struct Interpreter {
     pub stack: VecDeque<Token>,
     words_dict: HashMap<String, Vec<Token>>,
     const_dict: HashMap<String, Token>,
+    memory: Vec<Token>,
 }
 
 impl Interpreter {
@@ -261,6 +279,7 @@ impl Interpreter {
             stack: VecDeque::new(),
             words_dict: HashMap::new(),
             const_dict: HashMap::new(),
+            memory: Vec::new(),
         }
     }
     pub fn proccess_token(
@@ -273,6 +292,52 @@ impl Interpreter {
         let mut token_iter = tokens.into_iter();
         while let Some(token) = token_iter.next() {
             match token {
+                Token::Exclamation => {
+                    let value = self
+                        .stack
+                        .pop_back()
+                        .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+
+                    let address = self
+                        .stack
+                        .pop_back()
+                        .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+
+                    if let Token::Number(Number::SignedInteger(addr)) = address {
+                        if addr >= 0 && (addr as usize) < self.memory.len() {
+                            self.memory[addr as usize] = value;
+                        } else {
+                            return Err(InterpreterStatus::Error(InterpreterError::InvalidAddress));
+                        }
+                    } else {
+                        return Err(InterpreterStatus::Error(InterpreterError::InvalidAddress));
+                    }
+                }
+                Token::At => {
+                    let address = self
+                        .stack
+                        .pop_back()
+                        .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+                    if let Token::Number(Number::SignedInteger(addr)) = address {
+                        if addr >= 0 && (addr as usize) < self.memory.len() {
+                            let data = self.memory[addr as usize].clone();
+                            self.stack.push_back(data);
+                        } else {
+                            return Err(InterpreterStatus::Error(InterpreterError::InvalidAddress));
+                        }
+                    } else {
+                        return Err(InterpreterStatus::Error(InterpreterError::InvalidAddress));
+                    }
+                }
+                Token::Variable(variable) => {
+                    self.words_dict.insert(
+                        variable,
+                        vec![Token::Number(Number::SignedInteger(
+                            self.memory.len() as i128
+                        ))],
+                    );
+                    self.memory.push(Token::Number(Number::SignedInteger(0)));
+                }
                 Token::Key => {}
                 Token::Else => {}
                 Token::Then => {}
@@ -293,7 +358,12 @@ impl Interpreter {
                             Token::Number(Number::SignedInteger(end)),
                         ) = (start, end)
                         {
+                            self.words_dict.insert("i".to_string(), vec![]);
                             (start..end).for_each(|i| {
+                                self.words_dict.insert(
+                                    "i".to_string(),
+                                    vec![Token::Number(Number::SignedInteger(i))],
+                                );
                                 do_loop.iter().for_each(|instruction| {
                                     if let Token::Word(s) = instruction {
                                         if s == "i" {
@@ -302,8 +372,15 @@ impl Interpreter {
                                                 output,
                                                 true,
                                             );
+                                        } else {
+                                            let _ = self.proccess_token(
+                                                vec![instruction.clone()],
+                                                output,
+                                                inside,
+                                            );
                                         }
                                     } else {
+                                        println!("{:?}", instruction);
                                         let _ = self.proccess_token(
                                             vec![instruction.clone()],
                                             output,
@@ -493,10 +570,12 @@ impl Interpreter {
                             .stack
                             .pop_back()
                             .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
-                        if let Token::Number(Number::SignedInteger(-1)) = check {
-                            let _ = self.proccess_token(case_true, output, inside);
-                        } else if let Some(case_false) = case_false {
-                            let _ = self.proccess_token(case_false, output, inside);
+                        if let Token::Number(Number::SignedInteger(w)) = check {
+                            if w != 0 {
+                                let _ = self.proccess_token(case_true, output, inside);
+                            } else if let Some(case_false) = case_false {
+                                let _ = self.proccess_token(case_false, output, inside);
+                            }
                         }
                     }
                 }
@@ -577,6 +656,110 @@ impl Interpreter {
                                 Number::Float(_) => todo!(),
                             };
                             output.push(letter);
+                        }
+                    }
+                    "cr" => {
+                        output.push('\n');
+                    }
+                    "mod" => {
+                        println!("el stack {:?}", self.stack);
+                        let s1 = self
+                            .stack
+                            .pop_back()
+                            .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+                        let s2 = self
+                            .stack
+                            .pop_back()
+                            .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+
+                        if let (Token::Number(l), Token::Number(r)) = (s1, s2) {
+                            match (l, r) {
+                                (Number::SignedInteger(r), Number::SignedInteger(l)) => {
+                                    let res = l % r;
+                                    println!("el mod de {l} {r} es {res}");
+                                    self.stack
+                                        .push_back(Token::Number(Number::SignedInteger(res)))
+                                }
+                                (Number::SignedInteger(l), Number::Float(r)) => {
+                                    let res = l % r as i128;
+                                    self.stack
+                                        .push_back(Token::Number(Number::SignedInteger(res)));
+                                }
+                                (Number::Float(l), Number::SignedInteger(r)) => {
+                                    let res = l as i128 % r;
+                                    self.stack
+                                        .push_back(Token::Number(Number::SignedInteger(res)));
+                                }
+                                (Number::Float(l), Number::Float(r)) => {
+                                    let res = l as i128 % r as i128;
+                                    self.stack
+                                        .push_back(Token::Number(Number::SignedInteger(res)));
+                                }
+                            }
+                        }
+                    }
+                    "and" => {
+                        let s1 = self
+                            .stack
+                            .pop_back()
+                            .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+                        let s2 = self
+                            .stack
+                            .pop_back()
+                            .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+
+                        if let (Token::Number(l), Token::Number(r)) = (s1, s2) {
+                            match (l, r) {
+                                (Number::SignedInteger(l), Number::SignedInteger(r)) => {
+                                    let res = l & r;
+
+                                    self.stack
+                                        .push_back(Token::Number(Number::SignedInteger(res)))
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    "or" => {
+                        let s1 = self
+                            .stack
+                            .pop_back()
+                            .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+                        let s2 = self
+                            .stack
+                            .pop_back()
+                            .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+
+                        if let (Token::Number(l), Token::Number(r)) = (s1, s2) {
+                            match (l, r) {
+                                (Number::SignedInteger(l), Number::SignedInteger(r)) => {
+                                    let res = l | r;
+
+                                    self.stack
+                                        .push_back(Token::Number(Number::SignedInteger(res)))
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    "invert" => {
+                        let s1 = self
+                            .stack
+                            .pop_back()
+                            .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+
+                        if let Token::Number(l) = s1 {
+                            match l {
+                                Number::SignedInteger(l) => {
+                                    let res = !l;
+
+                                    self.stack
+                                        .push_back(Token::Number(Number::SignedInteger(res)))
+                                }
+                                Number::Float(l) => {
+                                    let res = l as i128;
+                                }
+                            }
                         }
                     }
                     _ => {
