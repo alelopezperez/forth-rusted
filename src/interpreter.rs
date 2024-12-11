@@ -171,10 +171,7 @@ impl<'a> Iterator for Lexer<'a> {
                     Err(_) => Some(Err(())),
                 }
             }
-            letter if letter.is_whitespace() => {
-                println!("Skip");
-                self.next()
-            }
+            letter if letter.is_whitespace() => self.next(),
             _ => {
                 let word = self.parse_word(letter).unwrap();
                 if word == "if" {
@@ -195,8 +192,6 @@ impl<'a> Iterator for Lexer<'a> {
                             if_true.push(tok);
                         }
                     }
-                    println!("true {:?}", if_true);
-                    println!("false {:?}", if_false);
                     Some(Ok(Token::If(if_true, Some(if_false))))
                 } else if word == "then" {
                     Some(Ok(Token::Then))
@@ -338,11 +333,18 @@ impl Interpreter {
                     );
                     self.memory.push(Token::Number(Number::SignedInteger(0)));
                 }
-                Token::Key => {}
+                Token::Key => {
+                    let mut buf = String::new();
+                    std::io::stdin()
+                        .read_line(&mut buf)
+                        .expect("couldnote read");
+                    let key = buf.as_bytes()[0] as i32;
+                    self.stack
+                        .push_back(Token::Number(Number::SignedInteger(key as i128)));
+                }
                 Token::Else => {}
                 Token::Then => {}
                 Token::Do(do_loop) => {
-                    println!("DOOO LOOOP {:?}", do_loop);
                     if inside {
                         let start = self
                             .stack
@@ -381,7 +383,6 @@ impl Interpreter {
                                             );
                                         }
                                     } else {
-                                        println!("{:?}", instruction);
                                         let _ = self.proccess_token(
                                             vec![instruction.clone()],
                                             output,
@@ -664,7 +665,6 @@ impl Interpreter {
                     }
                     "loop" => {}
                     "mod" => {
-                        println!("el stack {:?}", self.stack);
                         let s1 = self
                             .stack
                             .pop_back()
@@ -678,7 +678,6 @@ impl Interpreter {
                             match (l, r) {
                                 (Number::SignedInteger(r), Number::SignedInteger(l)) => {
                                     let res = l % r;
-                                    println!("el mod de {l} {r} es {res}");
                                     self.stack
                                         .push_back(Token::Number(Number::SignedInteger(res)))
                                 }
@@ -765,7 +764,6 @@ impl Interpreter {
                         }
                     }
                     _ => {
-                        println!("the word {}", word);
                         if let Some(constant) = self.const_dict.get(&word) {
                             self.stack.push_back(constant.clone());
                         } else {
