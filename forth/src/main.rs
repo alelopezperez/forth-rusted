@@ -1,8 +1,7 @@
 use std::io::Write;
 
-use interpreter::{Interpreter, Lexer};
+use lib_interpreter::{Interpreter, Lexer};
 
-mod interpreter;
 fn main() {
     let args = std::env::args().collect::<Vec<_>>();
 
