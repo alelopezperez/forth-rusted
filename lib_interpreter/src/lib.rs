@@ -2,7 +2,6 @@ use std::{
     char,
     collections::{HashMap, VecDeque},
     fmt::Display,
-    usize,
 };
 
 #[derive(Debug, PartialEq, Clone)]
@@ -32,6 +31,8 @@ pub enum Token {
 pub enum ArithmeticOperators {
     Plus,
     Minus,
+    Mult,
+    Div,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -71,6 +72,8 @@ impl Display for ArithmeticOperators {
         match self {
             ArithmeticOperators::Plus => write!(f, "+"),
             ArithmeticOperators::Minus => write!(f, "-"),
+            ArithmeticOperators::Mult => write!(f, "*"),
+            ArithmeticOperators::Div => write!(f, "/"),
         }
     }
 }
@@ -97,6 +100,7 @@ impl<'a> Lexer<'a> {
         let mut number = String::from(digit);
 
         let mut num_iter = self.rest.chars();
+        let mut flag_decimal = false;
 
         for letter in num_iter.by_ref() {
             if letter.is_whitespace() {
@@ -104,13 +108,21 @@ impl<'a> Lexer<'a> {
             }
             if letter.is_ascii_digit() {
                 number.push(letter);
+            } else if letter == '.' && !flag_decimal {
+                number.push(letter);
+                flag_decimal = true;
             } else {
                 return Err(());
             }
         }
         self.rest = num_iter.as_str();
 
-        Ok(Number::SignedInteger(number.parse().unwrap()))
+        if !flag_decimal {
+            Ok(Number::SignedInteger(number.parse().unwrap()))
+        } else {
+            println!("{number}");
+            Ok(Number::Float(number.parse().unwrap()))
+        }
     }
 
     fn parse_word(&mut self, letter: char) -> Result<String, ()> {
@@ -137,6 +149,9 @@ impl<'a> Iterator for Lexer<'a> {
 
         match letter {
             '+' => Some(Ok(Token::ArithmeticOperators(ArithmeticOperators::Plus))),
+            '-' => Some(Ok(Token::ArithmeticOperators(ArithmeticOperators::Minus))),
+            '*' => Some(Ok(Token::ArithmeticOperators(ArithmeticOperators::Mult))),
+            '/' => Some(Ok(Token::ArithmeticOperators(ArithmeticOperators::Div))),
             ':' => Some(Ok(Token::Colon)),
             ';' => Some(Ok(Token::Semicolon)),
             '=' => Some(Ok(Token::Equal)),
@@ -163,7 +178,6 @@ impl<'a> Iterator for Lexer<'a> {
                     Some(Ok(Token::Dot))
                 }
             }
-            '-' => Some(Ok(Token::ArithmeticOperators(ArithmeticOperators::Minus))),
             '0'..='9' => {
                 let num = self.parse_num(letter);
                 match num {
@@ -427,16 +441,22 @@ impl Interpreter {
                             .pop_back()
                             .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
 
-                        match (left, right) {
+                        match (right, left) {
                             (Token::Number(l), Token::Number(r)) => {
                                 let res = match (l, r) {
                                     (Number::SignedInteger(l), Number::SignedInteger(r)) => {
                                         let result = l + r;
                                         Token::Number(Number::SignedInteger(result))
                                     }
-                                    (Number::SignedInteger(_), Number::Float(_)) => todo!(),
+                                    (Number::SignedInteger(l), Number::Float(r)) => {
+                                        let result = l as f64 + r;
+                                        Token::Number(Number::Float(result))
+                                    }
 
-                                    (Number::Float(_), Number::SignedInteger(_)) => todo!(),
+                                    (Number::Float(l), Number::SignedInteger(r)) => {
+                                        let result = l + r as f64;
+                                        Token::Number(Number::Float(result))
+                                    }
                                     (Number::Float(l), Number::Float(r)) => {
                                         let result = l + r;
                                         Token::Number(Number::Float(result))
@@ -448,7 +468,120 @@ impl Interpreter {
                             _ => todo!(),
                         }
                     }
-                    ArithmeticOperators::Minus => todo!(),
+                    ArithmeticOperators::Minus => {
+                        let left = self
+                            .stack
+                            .pop_back()
+                            .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+
+                        let right = self
+                            .stack
+                            .pop_back()
+                            .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+
+                        match (right, left) {
+                            (Token::Number(l), Token::Number(r)) => {
+                                let res = match (l, r) {
+                                    (Number::SignedInteger(l), Number::SignedInteger(r)) => {
+                                        let result = l - r;
+                                        Token::Number(Number::SignedInteger(result))
+                                    }
+                                    (Number::SignedInteger(l), Number::Float(r)) => {
+                                        let result = l as f64 - r;
+                                        Token::Number(Number::Float(result))
+                                    }
+
+                                    (Number::Float(l), Number::SignedInteger(r)) => {
+                                        let result = l - r as f64;
+                                        Token::Number(Number::Float(result))
+                                    }
+                                    (Number::Float(l), Number::Float(r)) => {
+                                        let result = l - r;
+                                        Token::Number(Number::Float(result))
+                                    }
+                                };
+
+                                self.stack.push_back(res);
+                            }
+                            _ => todo!(),
+                        }
+                    }
+                    ArithmeticOperators::Mult => {
+                        let left = self
+                            .stack
+                            .pop_back()
+                            .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+
+                        let right = self
+                            .stack
+                            .pop_back()
+                            .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+
+                        match (right, left) {
+                            (Token::Number(l), Token::Number(r)) => {
+                                let res = match (l, r) {
+                                    (Number::SignedInteger(l), Number::SignedInteger(r)) => {
+                                        let result = l * r;
+                                        Token::Number(Number::SignedInteger(result))
+                                    }
+                                    (Number::SignedInteger(l), Number::Float(r)) => {
+                                        let result = l as f64 * r;
+                                        Token::Number(Number::Float(result))
+                                    }
+
+                                    (Number::Float(l), Number::SignedInteger(r)) => {
+                                        let result = l * r as f64;
+                                        Token::Number(Number::Float(result))
+                                    }
+                                    (Number::Float(l), Number::Float(r)) => {
+                                        let result = l * r;
+                                        Token::Number(Number::Float(result))
+                                    }
+                                };
+
+                                self.stack.push_back(res);
+                            }
+                            _ => todo!(),
+                        }
+                    }
+                    ArithmeticOperators::Div => {
+                        let left = self
+                            .stack
+                            .pop_back()
+                            .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+
+                        let right = self
+                            .stack
+                            .pop_back()
+                            .ok_or(InterpreterStatus::Error(InterpreterError::Underflow))?;
+
+                        match (right, left) {
+                            (Token::Number(l), Token::Number(r)) => {
+                                let res = match (l, r) {
+                                    (Number::SignedInteger(l), Number::SignedInteger(r)) => {
+                                        let result = l / r;
+                                        Token::Number(Number::SignedInteger(result))
+                                    }
+                                    (Number::SignedInteger(l), Number::Float(r)) => {
+                                        let result = l as f64 / r;
+                                        Token::Number(Number::Float(result))
+                                    }
+
+                                    (Number::Float(l), Number::SignedInteger(r)) => {
+                                        let result = l / r as f64;
+                                        Token::Number(Number::Float(result))
+                                    }
+                                    (Number::Float(l), Number::Float(r)) => {
+                                        let result = l / r;
+                                        Token::Number(Number::Float(result))
+                                    }
+                                };
+
+                                self.stack.push_back(res);
+                            }
+                            _ => todo!(),
+                        }
+                    }
                 },
                 Token::Semicolon => todo!(),
                 Token::Dot => {
